@@ -1,0 +1,15 @@
+# Ignore files ending in .o
+*.o
+
+# Ignore files ending in .old
+*.old
+
+# Ignore file named fmtx
+/fmtx
+
+# Ignore directories ending with old
+*old/
+
+# Ignore .conf files, but not demo.conf
+*.conf
+!demo.conf
