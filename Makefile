@@ -1,9 +1,9 @@
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17
+CXXFLAGS = -Wall -Wextra -std=c++17 -g
 LIBS = -lwiringPi
 
 TARGET = fmtx
-SRCS = main.cpp transmitter.cpp i2chandler.cpp rdsencoder.cpp conffile.cpp pwmcontroller.cpp
+SRCS = main.cpp transmitter.cpp i2chandler.cpp rdsencoder.cpp conffile.cpp pwmcontroller.cpp strarray.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 all: $(TARGET)

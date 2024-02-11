@@ -20,6 +20,7 @@
 #include "conffile.h"
 #include "rdsencoder.h"
 #include "pwmcontroller.h"
+#include "strarray.h"
 
 #define RUNNING_DIR "/tmp"
 #define LOCK_FILE "myprogram.lock"
@@ -40,7 +41,8 @@ bool softclip = true;
 uint8_t buffergain = 0;
 uint8_t digitalgain = 0;
 uint8_t inputimpedance = 0;
-char* rdssid = NULL;
+//char* rdssid = NULL;
+strarray* rdssid = NULL;
 char rdspi[5] = "ABCD"; // pi code in hex
 
 
@@ -225,7 +227,11 @@ void run_daemon()
 
     double rds_time01;
     char* next_loop = NULL; // what to do in the next loop, null otherwise
-
+    strarray::type* currentPS = rdssid->get();
+//    currentPS = rdssid->get();
+    printf("RDS : %s",currentPS->content);
+    char currentPSStr[9];
+    short PScounter = 2; // start at the number or times we submit it->initialize automatically.
     while(1)
     {
         rds_time01 = (double)(clock()-start_time) / CLOCKS_PER_SEC;
@@ -334,13 +340,24 @@ void run_daemon()
 	    transmitter.set_frequency(frequency); // dirty - we just want to be sure the freq fits even if interference to i2c happens.
 	    if (sendRDS && transmitting) {  // only try rds when enabled and transmitting already
 		char logbuf[64];
-		snprintf(logbuf,sizeof(logbuf),"sending RDS for PS... PS: '%s', PI: 0x%s",rdssid,rdspi);
+		PScounter++;
+		if (PScounter > 2) { // change PS
+		    PScounter = 0;
+		    uint8_t len = strnlen(currentPS->content,8);
+		    uint8_t pad = (8-len)/2;
+		    memset(currentPSStr, ' ',8);
+		    strncpy(currentPSStr+pad,currentPS->content,len);
+		    currentPSStr[8] = '\0';
+		    currentPS = currentPS->next;
+		    if (currentPS == NULL) currentPS = rdssid->get(); //loop pointered array: go beginning.
+		}
+		snprintf(logbuf,sizeof(logbuf),"sending RDS for PS... PS: '%s', PI: 0x%s",currentPSStr,rdspi);
 		log_message(logbuf);
-		rds_encoder myRDS;
+		rds_encoder* myRDS = new rds_encoder;
 		rds_encoder::rds_message_list* RDSmsg;
-		myRDS.set_pi(rdspi);
-		myRDS.set_ps(rdssid);
-		RDSmsg = myRDS.get_ps_msg();
+		myRDS->set_pi(rdspi);
+		myRDS->set_ps(currentPSStr);
+		RDSmsg = myRDS->get_ps_msg();
 		rds_encoder::rds_message_list* tmpList;
     		tmpList = RDSmsg;
 		int8_t transmit_result = 0;
@@ -355,6 +372,7 @@ void run_daemon()
         	    tmpList = tmpList->next;
     		}
 		if (!transmitting) next_loop = strdup("activate");
+		delete myRDS;
         /*
     	    rds_encoder::rds_message_list* current = RDSmsg;
     	    rds_encoder::rds_message_list* next;
@@ -496,20 +514,35 @@ int main(int argc, char *argv[])
         buffergain = myCfg.getInt("buffergain",0);
         digitalgain = myCfg.getInt("digitalgain",0);
         inputimpedance = myCfg.getInt("inputimpedance",0);
-        rdssid = strdup(myCfg.getString("RDS_SID","        "));
-	strncpy(rdspi,myCfg.getString("picode","ABCD"),4);	
+//        rdssid = strdup(myCfg.getString("RDS_SID","        "));
+	rdssid = myCfg.getStrArray("RDS_SID");
+        if (rdssid == NULL) {
+	    //rdssid = strdup (" RADIO ");
+//	    rdssid = new strarray;
+//	    rdssid->append(" RADIO ");
+	    myCfg.setString("RDS_SID"," RADIO ");
+	    rdssid = myCfg.getStrArray("RDS_SID");
+	} else {
+	rdssid = rdssid->dup(); // get a new instance, independant from cfg.
+	}
+
+	strncpy(rdspi,myCfg.getString("picode","ABCD"),4);
 	char bufstr[4];
 	rdspi[4] = '\0'; // should be, but depends on init, so better save then sorry.
         printf("\n  Loaded data:\n\n");
 	printf("   * Logfile:         %s\n\n",logfile);
         printf("   * Frequency:       %.2f MHz\n",frequency);
-	printf("   * RDS PS:          %s\n",rdssid);
+	printf("   * RDS PS:          %s\n",rdssid->toString(','));
         printf("   * Power:           %s\n",(power<0)?"PWM disabled":itoa(power,bufstr));
         printf("   * Auto-Off:        %s\n", autooff ? "enabled" : "disabled");
         printf("   * Soft-Clipping:   %s\n", softclip ? "On" : "Off");
         printf("   * Buffer gain:     %i dB\n", buffergain);
         printf("   * Input Impedance: %s\n",myCfg.inputImpedanceStr[inputimpedance]);
         printf("\n");
+
+        printf("   * Multi(test):     %s\n",myCfg.getString("MULTI"," "));
+        printf("\n");
+
 	}
 /*        transmitter.startup();
         transmitter.set_frequency(frequency);
@@ -579,14 +612,18 @@ int main(int argc, char *argv[])
 	    daemonize();	// prepare daemonization
 	}
 	if (main_run) {
-	    if (rdssid == NULL) rdssid = strdup (" RADIO ");
+	    if (rdssid == NULL) {
+	
+		rdssid = new strarray;
+		rdssid->append(" RADIO ");
+	    }
 	    if (logfile == NULL) logfile = strdup (LOG_FILE);
 	    run_daemon();	// run main (daemon) loop.
 	}
     }
     if (command != NULL) free(command);
-    if (rdssid != NULL) free(rdssid);
     if (logfile != NULL) free(logfile);
+    if (rdssid != NULL) delete rdssid;
     log_message("program ended.");
     return 0;
 }

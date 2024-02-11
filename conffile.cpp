@@ -16,7 +16,8 @@ conffile::~conffile() { //destructor
     while (current != NULL) {
         next = current->next;
         free(current->key);
-        free(current->value);
+//        free(current->value);
+	delete current->value; //is a class
         free(current);
         current = next;
     }
@@ -37,9 +38,17 @@ int conffile::load() {
     if (line[0] == '#' || line[0] == '\n') { // ignore comment lines (#)
         continue;
     }
+    for (char *p = line; *p; ++p) {
+        if (*p == '\n' || *p == '\r') {
+            *p = '\0'; // Replace '\n' or '\r' with null terminator
+            break; // Exit the loop once we've replaced the character
+        }
+    }
+
     ConfigPair* pair = (ConfigPair*)malloc(sizeof(ConfigPair));
     pair->key = (char*)malloc(128);
-    pair->value = (char*)malloc(128);
+//    char* pairvalue = (char*)malloc(128);
+    pair->value = new strarray;
 
     char* equals = strchr(line, '=');
     if (equals) {
@@ -52,26 +61,38 @@ int conffile::load() {
 
         if (*value == '"') {
             // Value starts with a quote, so find the matching quote
-            char* endquote = strchr(value + 1, '"');
-            if (endquote) {
-                *endquote = '\0';
-                strncpy(pair->value, value + 1, 127);
-            } else {
-                // No matching quote, so just copy the rest of the line
-                strncpy(pair->value, value + 1, 127);
-            }
+	    while (value) {
+		char* startQuote = value; // save start position
+        	char* endQuote = strchr(value + 1, '"');
+        	if (endQuote) {
+            	    *endQuote = '\0';
+            	    //strncpy(pairvalue, value + 1, 127);
+		    pair->value->append(startQuote+1);
+		    //strncpy(pair->value, value + 1, 127);
+		    value = strchr(endQuote+1, '"');
+        	} else {
+            	    // No matching quote, so just copy the rest of the line
+		    // strncpy(pairvalue, value + 1, 127);
+		    pair->value->append(value+1);
+		    break;
+
+	        }
+	}
         } else {
             // No starting quote, so just copy the rest of the line
-            strncpy(pair->value, value, 127);
+//            strncpy(pairvalue, value, 127);		
+	    
+	    pair->value->append(value);
+
         }
-        pair->value[127] = '\0';
+//        pairvalue[127] = '\0';
     } else {
         // No equals sign, so just copy the whole line into the key and leave the value empty
         strncpy(pair->key, line, 127);
         pair->key[127] = '\0';
-        pair->value[0] = '\0';
+        //pairvalue[0] = '\0';
     }
-
+//    pair->value->append(pairvalue);
     pair->next = configData;
     configData = pair;
 }
@@ -87,7 +108,7 @@ int conffile::save() {
 
     ConfigPair* current = configData;
     while (current) {
-        fprintf(file, "%s = %s\n", current->key, current->value);
+        fprintf(file, "%s = %s\n", current->key, current->value->toString(';'));
         current = current->next;
     }
 
@@ -95,11 +116,22 @@ int conffile::save() {
     return 0;
 }
 
+strarray* conffile::getStrArray(const char* key) {
+    ConfigPair* current = this->configData;
+    while (current) {
+	if (strcmp(current->key, key) == 0) {
+	    return current->value;
+	}
+	current = current->next;
+    }
+    return NULL;
+}
+
 const char* conffile::getString(const char* key, const char* defaultValue) {
     ConfigPair* current = this->configData;
     while (current) {
         if (strcmp(current->key, key) == 0) {
-            return current->value;
+            return current->value->toString(';');
         }
         current = current->next;
     }
@@ -150,8 +182,11 @@ void conffile::setString(const char* key, const char* value) {
 
     while (current) {
         if (strcmp(current->key, key) == 0) {
-            free(current->value);
-            current->value = strdup(value);
+            //free(current->value);
+	    delete current->value;
+	    current->value = new strarray;
+	    current->value->append(value);
+//            current->value = strdup(value);
             return;
         }
         current = current->next;
@@ -160,7 +195,13 @@ void conffile::setString(const char* key, const char* value) {
     // If the key was not found, create a new key-value pair and add it to the list
     ConfigPair* newPair = (ConfigPair*)malloc(sizeof(ConfigPair));
     newPair->key = strdup(key);
-    newPair->value = strdup(value);
+//    newPair->value = strdup(value);
+//    delete current->value;
+    //strarray* tmpVal = new strarray;
+    newPair->value = new strarray;
+    newPair->value->append(value);
+    
+    // add on the front
     newPair->next = this->configData;
     this->configData = newPair;
 }

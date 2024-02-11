@@ -27,8 +27,19 @@ rds_encoder::rds_encoder() {
 //    printf("RDS encoder init\n");
 }
 
+void rds_encoder::rmlClear() {
+    rds_encoder::rds_message_list* current = rds_encoder::rmlHead;
+    rds_encoder::rds_message_list* next;
+    while (current != NULL) {
+	next = current->next;
+	free(current);
+	current = next;
+    }
+}
+
 rds_encoder::~rds_encoder() {
 //    printf("RDS encoder destroy\n");
+      rmlClear();
 }
 
 void rds_encoder::set_pi(const char* picode) {
@@ -48,6 +59,7 @@ void rds_encoder::set_ps(const char* stationname){
     strncpy(ps,stationname,len);
     if (len<8) {
 	memset(ps+len,' ',8-len);
+	ps[8] = '\0';
     }
     
 }
@@ -55,8 +67,9 @@ void rds_encoder::set_ps(const char* stationname){
 
 rds_encoder::rds_message_list* rds_encoder::get_ps_msg(){
     // Function to generate a linked list of RDS PS messages without CRC
-    rds_message_list *head = NULL;
+//    rds_message_list *head = NULL;
     rds_message_list *current = NULL;
+    rmlClear();
 
     // Set the group type for PS messages
     uint8_t group_type = group_types::BTS_0A;
@@ -85,15 +98,15 @@ rds_encoder::rds_message_list* rds_encoder::get_ps_msg(){
 
         new_node->next = NULL;
 
-        if (head == NULL) {
-            head = new_node;
-            current = head;
+        if (rds_encoder::rmlHead == NULL) {
+            rmlHead = new_node;
+            current = rds_encoder::rmlHead;
         } else {
             current->next = new_node;
             current = new_node;
         }
     }
-    return head;
+    return rmlHead;
 }
 
 

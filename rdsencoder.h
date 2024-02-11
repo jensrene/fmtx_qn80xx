@@ -103,7 +103,7 @@ public:
     rds_encoder();
     ~rds_encoder();
 
-
+    void rmlClear();
     void set_pi(const char* picode);
     void set_pty(pty_codes_eu pty);
     void set_ps(const char* stationname);
@@ -125,8 +125,8 @@ private:
     bool ms = false;		// false=music, true=speech
     bool ta = false;		// currently a traffic announcement is runnin
     uint16_t parse_hex(const char* str);
-
-
+    rds_message_list* rmlHead = NULL;  // to save the head position
+    
 };
 
 #endif // RDSENCODER_H
