@@ -31,7 +31,6 @@
 #define MAXPOWER 103 // this is the maximum power from cfg file/power command. We could go to 10000 or higher, but that only gives us precision, not more power of course ;) 0.1% steps seem precise enought. One step represents 0.0033V on the pi PWM
 
 
-
 bool is_daemon = false;
 char* logfile = NULL;
 double frequency = 87.5;
@@ -41,8 +40,9 @@ bool softclip = true;
 uint8_t buffergain = 0;
 uint8_t digitalgain = 0;
 uint8_t inputimpedance = 0;
-//char* rdssid = NULL;
 strarray* rdssid = NULL;
+strarray* rdssiddyn = NULL;  // for additional stuff.
+bool rdssiddynactive = false; // not defines if, used to switch buffers from nondyn. false=nondyn, true=dyn
 char rdspi[5] = "ABCD"; // pi code in hex
 
 
@@ -78,6 +78,39 @@ char rdspi[5] = "ABCD"; // pi code in hex
 }  
 
 
+/**
+ * Concatenates two strings, dynamically allocating memory for the result.
+ * 
+ * @param str1 The first string.
+ * @param str2 The second string.
+ * @return A pointer to the newly allocated string that contains the contents
+ *         of str1 followed by the contents of str2. The caller is responsible
+ *         for freeing this memory. Returns NULL if memory allocation fails or
+ *         either input string is NULL.
+ */
+char* strcat_copy(const char *str1, const char *str2) {
+    if (!str1 || !str2) {
+        // Handle null pointers to prevent undefined behavior.
+        return NULL;
+    }
+
+    size_t str1_len = strlen(str1);
+    size_t str2_len = strlen(str2);
+
+    // Allocate memory for the concatenated string plus one for the null terminator.
+    char *new_str = (char*)malloc(str1_len + str2_len + 1);
+    if (!new_str) {
+        // Memory allocation failed, return NULL to indicate failure.
+        return NULL;
+    }
+
+    // Copy the first string into the new string.
+    memcpy(new_str, str1, str1_len);
+    // Append the second string to the new string.
+    memcpy(new_str + str1_len, str2, str2_len + 1); // Includes null terminator.
+
+    return new_str;
+}
 
 bool file_exists(const char *fname)
 {
@@ -100,6 +133,97 @@ void log_message(const char *message)
         fclose(file);
     } else {
         printf("[%s] %s\n", timestamp, message);
+    }
+}
+
+
+// Function to calculate the length of the next word until the next space or '-' or end of string
+int nextWordLength(const char* str, int startIndex) {
+    int length = 0;
+    while (str[startIndex] != ' ' && str[startIndex] != '-' && str[startIndex] != '\0') {
+        ++length;
+        ++startIndex;
+    }
+    return length;
+}
+
+/*
+void titleToPS(const char* musicArtistTitle, strarray& output) {
+    char buffer[9]; // RDS PS buffer: 8CHR+\0
+    int bufferIndex = 0; // where we are in the bufer
+    int i = 0;
+//    for (int i=0; musicArtistTitle[i] != '\0'; ++i){ // go through each letter
+    while (musicArtistTitle[i] != '\0') {
+	if (musicArtistTitle[i] == '-' || bufferIndex == 8 || musicArtistTitle[i] == '\0' ) {	// we need split
+	    if ((musicArtistTitle[i] == '-') || ( musicArtistTitle[i] == '\0' && bufferIndex > 0) ) { //split char
+		int wordLength = nextWordLength(musicArtistTitle, i+1);
+		if (((wordLength < 8) && (bufferIndex + wordLength <= 8)) || (musicArtistTitle[i] == '\0')) { //word is shorter->fill
+		    memset(buffer+bufferIndex, ' ', 8);
+		    bufferIndex = 8;
+		}
+	    }
+	    buffer[bufferIndex] = '\0';
+	    output.append(buffer);
+	    bufferIndex = 0;
+	    if (musicArtistTitle[i] == '-') ++i;
+	    if (musicArtistTitle[i] == '\0') break;
+	}
+
+	if (musicArtistTitle[i] != '\0' && bufferIndex < 8) {
+	    buffer[bufferIndex++] = musicArtistTitle[i++];
+	}
+    }
+/*    if (bufferIndex > 0) { //append remain
+	buffer[bufferIndex] = '\0';
+	output.append(buffer);
+    }***
+}*/
+
+void titleToPS(const char* musicTitle, strarray& output) {
+    int i = 0, wordLen = 0;
+    char buffer[9]; // Temporary buffer for chunks of up to 8 characters
+    int bufferIndex = 0; // Current index in the buffer
+
+    while (musicTitle[i] != '\0') {
+        if (musicTitle[i] == ' ' || musicTitle[i] == '-') {
+            // If at a space or hyphen, check the length of the next word
+            int nextLen = nextWordLength(&musicTitle[i + 1],0);
+
+            // Decide whether to split here or start a new chunk based on the next word's length
+            if (bufferIndex + nextLen >= 8 || musicTitle[i] == '-') {
+                // Flush the current buffer if it's not empty
+                if (bufferIndex > 0) {
+                    buffer[bufferIndex] = '\0'; // Null-terminate
+                    output.append(buffer);
+                    bufferIndex = 0; // Reset for the next word
+                }
+                if (musicTitle[i] == '-') {
+                    i++; // Skip the hyphen for the next iteration
+                    continue; // Don't add '-' to the buffer
+                }
+            } else {
+                // If the next word can fit in the current chunk, add the space
+                buffer[bufferIndex++] = musicTitle[i];
+            }
+        } else {
+            // Add the current character to the buffer
+            if (bufferIndex < 8) {
+                buffer[bufferIndex++] = musicTitle[i];
+            } else {
+                // Buffer full, flush it before adding more characters
+                buffer[bufferIndex] = '\0'; // Null-terminate
+                output.append(buffer);
+                bufferIndex = 0; // Reset buffer index
+                buffer[bufferIndex++] = musicTitle[i]; // Start next chunk with current character
+            }
+        }
+        i++; // Move to the next character
+
+        // Handle the last word
+        if (musicTitle[i] == '\0' && bufferIndex > 0) {
+            buffer[bufferIndex] = '\0'; // Null-terminate
+            output.append(buffer);
+        }
     }
 }
 
@@ -153,7 +277,7 @@ void daemonize()
 
 void run_daemon()
 {
-    char buffer[256];
+    char buffer[512];
     bool sendRDS = false;
     bool transmitting = false;
 
@@ -228,8 +352,6 @@ void run_daemon()
     double rds_time01;
     char* next_loop = NULL; // what to do in the next loop, null otherwise
     strarray::type* currentPS = rdssid->get();
-//    currentPS = rdssid->get();
-    printf("RDS : %s",currentPS->content);
     char currentPSStr[9];
     short PScounter = 2; // start at the number or times we submit it->initialize automatically.
     while(1)
@@ -252,7 +374,8 @@ void run_daemon()
 	    int n;	
 	    if (next_loop != NULL) {
 		log_message("internal command executed.");
-		strcpy(buffer, next_loop);
+		strncpy(buffer, next_loop,511);
+		buffer[511] = '\n';
 		n = strlen(buffer);
 		free(next_loop);
 		next_loop = NULL;
@@ -326,8 +449,22 @@ void run_daemon()
 		    } else {
 		    log_message("ERROR: Try to set power with disabled pwm. Please add power=xxx (value 1-1000) into config file.");
 		    }
-		} else {
-            	    char logbuf[273];
+		} else if (strncmp(buffer,"title=",6) == 0) {  // first 6 letters are "title="
+		    char logbuf[512];
+		    char* splitpos = strchr(buffer,'='); // pos of = in "title="
+		    if (splitpos != NULL) { // must be true wit the current version, but better safe
+			char* title = splitpos+1;
+			if (rdssiddyn == NULL) { rdssiddyn = new strarray; }
+			rdssiddyn->clear();
+			titleToPS(title,*rdssiddyn);
+			snprintf(logbuf,sizeof(logbuf), "Title recieved: \"%s\"",title);
+			rdssiddynactive = true;
+			currentPS = rdssiddyn->get();
+			log_message(logbuf);
+		    }
+		}
+		else {
+            	    char logbuf[529];
 		    snprintf(logbuf, sizeof(logbuf), "Command recieved %s",buffer);
 		    log_message(logbuf);
         	}
@@ -341,15 +478,26 @@ void run_daemon()
 	    if (sendRDS && transmitting) {  // only try rds when enabled and transmitting already
 		char logbuf[64];
 		PScounter++;
-		if (PScounter > 2) { // change PS
+		if (PScounter > 2) { // change PS to next entry (middle shorters)
 		    PScounter = 0;
+		    
 		    uint8_t len = strnlen(currentPS->content,8);
 		    uint8_t pad = (8-len)/2;
 		    memset(currentPSStr, ' ',8);
 		    strncpy(currentPSStr+pad,currentPS->content,len);
 		    currentPSStr[8] = '\0';
 		    currentPS = currentPS->next;
-		    if (currentPS == NULL) currentPS = rdssid->get(); //loop pointered array: go beginning.
+		    if (currentPS == NULL) {  // next is empty.
+			if ( rdssiddynactive ) {  // dyn array is set->we want that,too!
+			    currentPS = rdssiddyn->get(); // switch to rdssiddyn
+			    rdssiddynactive = false;
+			    
+			}
+			else {
+			    currentPS = rdssid->get(); //loop pointered array: go beginning.
+			    rdssiddynactive = (rdssiddyn != NULL); // only do if we actually have that class.
+			}
+		    }
 		}
 		snprintf(logbuf,sizeof(logbuf),"sending RDS for PS... PS: '%s', PI: 0x%s",currentPSStr,rdspi);
 		log_message(logbuf);
@@ -373,14 +521,6 @@ void run_daemon()
     		}
 		if (!transmitting) next_loop = strdup("activate");
 		delete myRDS;
-        /*
-    	    rds_encoder::rds_message_list* current = RDSmsg;
-    	    rds_encoder::rds_message_list* next;
-    	    while (current != NULL) {
-        	next = current->next;
-        	free(current);
-        	current = next;
-    	    }*/
 	    }
 	}
     sleep(0.9);
@@ -417,6 +557,7 @@ void print_help(const char* prog_name) {
     printf("  -d, --daemon                       Start the program as a daemon listener.\n");
     printf("  -s, --status                       Gets the status of the transmitter from a running daemon.\n");
     printf("  -a, --activate                     Activates the transmission of fm with configured settings.\n");
+    printf("  -t, --title                        Submit the currently played item/title.\n");
     printf("  -p, --power <power_value>          Sets the power of the transmitter, basially voltage to the '.\n");
     printf("                                     power transistor. 'power' value must be between 0 and 103.\n");
     printf("  -q, --stop                         Stops the transmission and the daemon exits.\n");
@@ -454,10 +595,11 @@ int main(int argc, char *argv[])
 	{"power",no_argument, NULL, 'p'},
 	{"stop",no_argument, NULL, 'q'},
 	{"help",no_argument, NULL, 'h'},
+	{"title",required_argument, NULL, 't'},
         {0, 0, 0, 0}
     };
     
-    while ((opt = getopt_long(argc, argv, "r:c:edsap:qh", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "r:c:edst:ap:qh", options, NULL)) != -1) {
         switch (opt) {
             case 'r':
                 command = strdup(optarg);
@@ -484,9 +626,10 @@ int main(int argc, char *argv[])
 		command = strdup("activate");
 		break;
 	    case 'p':
-		char buffer[30];
+/*		char buffer[30];
 		snprintf(buffer,sizeof(buffer)-1,"power=%s",optarg);
-		command = strdup(buffer);
+		command = strdup(buffer);*/
+		command = strcat_copy("power=",optarg);
 		break;
 	    case 'q':
 		command = strdup("stop");
@@ -494,6 +637,10 @@ int main(int argc, char *argv[])
 	    case 'h':
 		print_help(argv[0]);
 		exit(EXIT_SUCCESS);
+	    case 't':
+		command = strcat_copy("title=",optarg);
+		//printf(" Title recieved: %s \n",optarg);
+		break;
             default:
                 print_help(argv[0]);
                 exit(EXIT_FAILURE);
@@ -514,12 +661,8 @@ int main(int argc, char *argv[])
         buffergain = myCfg.getInt("buffergain",0);
         digitalgain = myCfg.getInt("digitalgain",0);
         inputimpedance = myCfg.getInt("inputimpedance",0);
-//        rdssid = strdup(myCfg.getString("RDS_SID","        "));
 	rdssid = myCfg.getStrArray("RDS_SID");
         if (rdssid == NULL) {
-	    //rdssid = strdup (" RADIO ");
-//	    rdssid = new strarray;
-//	    rdssid->append(" RADIO ");
 	    myCfg.setString("RDS_SID"," RADIO ");
 	    rdssid = myCfg.getStrArray("RDS_SID");
 	} else {
@@ -539,21 +682,7 @@ int main(int argc, char *argv[])
         printf("   * Buffer gain:     %i dB\n", buffergain);
         printf("   * Input Impedance: %s\n",myCfg.inputImpedanceStr[inputimpedance]);
         printf("\n");
-
-        printf("   * Multi(test):     %s\n",myCfg.getString("MULTI"," "));
-        printf("\n");
-
 	}
-/*        transmitter.startup();
-        transmitter.set_frequency(frequency);
-        transmitter.set_softclipping(softclip);
-        transmitter.set_buffergain(buffergain);
-        transmitter.set_digitalgain(digitalgain);
-        transmitter.set_inputimpedance(inputimpedance);
-        free(filename);
-        free(rdssid);
-*/
-
     if (command)    { // we have a command -> send raw
 	printf(" Sending command %s ...",command);
         int sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -562,7 +691,6 @@ int main(int argc, char *argv[])
             perror("socket");
             exit(1);
         }
-
         struct sockaddr_un addr;
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
@@ -570,12 +698,11 @@ int main(int argc, char *argv[])
 
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1)
         {	    
-//            perror("connect");
 	    printf(" ERROR\n  * Failed to connect to running process. Is the daemon running?\n");
             close(sock);
+	    if (command != NULL) free(command);
             exit(1);
         }
-
         write(sock, command, strlen(command));
 	if (strcmp(command,"status") == 0) {
 	    char tmp_status[2];
@@ -597,12 +724,9 @@ int main(int argc, char *argv[])
 //          printf("%i,",status & 0b1111);
 //            usleep(10000);
 //        }
-
 		} else {
 		printf( " ERROR: No status recieved\n");
 		}
-	    
-	    
 	}
         close(sock);
 	printf("done!\n\n");
@@ -624,6 +748,7 @@ int main(int argc, char *argv[])
     if (command != NULL) free(command);
     if (logfile != NULL) free(logfile);
     if (rdssid != NULL) delete rdssid;
+    if (rdssiddyn != NULL) delete rdssiddyn;
     log_message("program ended.");
     return 0;
 }
