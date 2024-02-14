@@ -289,7 +289,7 @@ void run_daemon()
     }
 
     Transmitter transmitter(QN80XX_ADDR, 5);
-    clock_t start_time = clock();
+    time_t start_time = time(NULL);
     PWMController *pwmController = NULL;
     if (power >= 0) {
 	pwmController = new PWMController(PWM_RPI_PIN);     // Create an instance of PWMController
@@ -300,7 +300,7 @@ void run_daemon()
 	log_message(logbuf_tmp);
     }
 
-    double rds_time01;
+    time_t rds_time01; // current timer for rds
     uint8_t radiotext_counter = 0;
 
     char* next_loop = NULL; // what to do in the next loop, null otherwise
@@ -311,7 +311,9 @@ void run_daemon()
     bool RTChanged = true;
     while(1)
     {
-        rds_time01 = (double)(clock()-start_time) / CLOCKS_PER_SEC;
+        rds_time01 = time(NULL)-start_time;
+//	printf("%i s\n",rds_time01);
+
 	int client_sock;
 	if (next_loop == NULL) client_sock = accept(sock, NULL, NULL);
 	else client_sock = 0;
@@ -429,9 +431,8 @@ void run_daemon()
 	    }
     	    close(client_sock);
 	}
-	
 	if (rds_time01 >= 1.0){ // everything in here will be called ~each second
-	    start_time = clock(); // doing it early makes sure we have only 1sec not 1sec+processingtime.
+	    start_time = time(NULL); // doing it early makes sure we have only 1sec not 1sec+processingtime.
 	    transmitter.set_frequency(frequency); // dirty - we just want to be sure the freq fits even if interference to i2c happens.
 	    if (sendRDS && transmitting) {  // only try rds when enabled and transmitting already
 		radiotext_counter++;		// only increment if we do RDS and transmit.
@@ -510,7 +511,8 @@ void run_daemon()
 	    if (!transmitting) next_loop = strdup("activate"); // dirty trick: if send failed, reactivate/reinitialize transmitter. Helps I2C errors.
 	    delete myRDS;
 	}
-    sleep(0.9);
+//    sleep(0.9);
+    usleep(900000);
     }
     if (pwmController != NULL) delete(pwmController);
     if (currentRTstr != NULL) free(currentRTstr);
