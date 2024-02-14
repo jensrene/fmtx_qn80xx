@@ -4,7 +4,8 @@
 music_files=("$@")
 
 # Command template, replace 'your_program' with the actual program you want to call
-cmd_template="./fmtx --title='{}'"
+#cmd_template=(./fmtx --title=)
+cmd_template='./fmtx --title="{}"'
 
 pipe="/tmp/mplayer-control"
 
@@ -48,11 +49,15 @@ while IFS= read -r line; do
         # Only proceed if both title and artist have been captured
         if [[ -n "$title" && -n "$artist" ]]; then
             # Replace placeholders in the command template
+#	    escaped_input=$(printf "%q" "$artist-$title")
             cmd="${cmd_template//\{\}/"$artist-$title"}"
 #            cmd="${cmd//\{\}/"$artist"}"
 
             # Execute the command
             eval "$cmd"
+#	    cmd = cmd_template
+#	    cmd+=("$artist-$title")
+#	    "${cmd[@]}"
         fi
         # Reset capturing flag
         capture_info=false

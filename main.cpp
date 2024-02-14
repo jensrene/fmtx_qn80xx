@@ -147,40 +147,9 @@ int nextWordLength(const char* str, int startIndex) {
     return length;
 }
 
-/*
-void titleToPS(const char* musicArtistTitle, strarray& output) {
-    char buffer[9]; // RDS PS buffer: 8CHR+\0
-    int bufferIndex = 0; // where we are in the bufer
-    int i = 0;
-//    for (int i=0; musicArtistTitle[i] != '\0'; ++i){ // go through each letter
-    while (musicArtistTitle[i] != '\0') {
-	if (musicArtistTitle[i] == '-' || bufferIndex == 8 || musicArtistTitle[i] == '\0' ) {	// we need split
-	    if ((musicArtistTitle[i] == '-') || ( musicArtistTitle[i] == '\0' && bufferIndex > 0) ) { //split char
-		int wordLength = nextWordLength(musicArtistTitle, i+1);
-		if (((wordLength < 8) && (bufferIndex + wordLength <= 8)) || (musicArtistTitle[i] == '\0')) { //word is shorter->fill
-		    memset(buffer+bufferIndex, ' ', 8);
-		    bufferIndex = 8;
-		}
-	    }
-	    buffer[bufferIndex] = '\0';
-	    output.append(buffer);
-	    bufferIndex = 0;
-	    if (musicArtistTitle[i] == '-') ++i;
-	    if (musicArtistTitle[i] == '\0') break;
-	}
-
-	if (musicArtistTitle[i] != '\0' && bufferIndex < 8) {
-	    buffer[bufferIndex++] = musicArtistTitle[i++];
-	}
-    }
-/*    if (bufferIndex > 0) { //append remain
-	buffer[bufferIndex] = '\0';
-	output.append(buffer);
-    }***
-}*/
 
 void titleToPS(const char* musicTitle, strarray& output) {
-    int i = 0, wordLen = 0;
+    int i = 0;
     char buffer[9]; // Temporary buffer for chunks of up to 8 characters
     int bufferIndex = 0; // Current index in the buffer
 
@@ -319,19 +288,6 @@ void run_daemon()
         exit(3);
     }
 
-/*	int flags = fcntl(client_sock,F_GETFL,0);
-	if (flags == -1)  {
-	    log_message("ERROR: failed to get flags for socket\n");
-	    exit(2);
-	}
-	flags |= O_NONBLOCK;
-	if (fcntl(client_sock,F_SETFL,flags) == -1) {
-	    log_message("ERROR: failed to set flags for socket\n");
-	    exit(3);
-	}
-*/
-
-
     Transmitter transmitter(QN80XX_ADDR, 5);
     clock_t start_time = clock();
     PWMController *pwmController = NULL;
@@ -343,17 +299,16 @@ void run_daemon()
 	snprintf(logbuf_tmp, sizeof(logbuf_tmp)-1, "PWM initialized with frequency of %.3f Hz\n",frequency);
 	log_message(logbuf_tmp);
     }
-    
-    // Set the voltage to 2.5V
-//    float voltage = 1.5;
-//    pwmController.setVoltage(voltage);
-
 
     double rds_time01;
+    uint8_t radiotext_counter = 0;
+
     char* next_loop = NULL; // what to do in the next loop, null otherwise
     strarray::type* currentPS = rdssid->get();
     char currentPSStr[9];
+    char* currentRTstr = NULL;   //charptr! needs malloc/free.
     short PScounter = 2; // start at the number or times we submit it->initialize automatically.
+    bool RTChanged = true;
     while(1)
     {
         rds_time01 = (double)(clock()-start_time) / CLOCKS_PER_SEC;
@@ -451,9 +406,12 @@ void run_daemon()
 		    }
 		} else if (strncmp(buffer,"title=",6) == 0) {  // first 6 letters are "title="
 		    char logbuf[512];
+		    if (currentRTstr != NULL) free(currentRTstr);
 		    char* splitpos = strchr(buffer,'='); // pos of = in "title="
 		    if (splitpos != NULL) { // must be true wit the current version, but better safe
 			char* title = splitpos+1;
+			currentRTstr = strdup(title); // RadioText = current title.
+			RTChanged = true;		// it changed!
 			if (rdssiddyn == NULL) { rdssiddyn = new strarray; }
 			rdssiddyn->clear();
 			titleToPS(title,*rdssiddyn);
@@ -476,6 +434,7 @@ void run_daemon()
 	    start_time = clock(); // doing it early makes sure we have only 1sec not 1sec+processingtime.
 	    transmitter.set_frequency(frequency); // dirty - we just want to be sure the freq fits even if interference to i2c happens.
 	    if (sendRDS && transmitting) {  // only try rds when enabled and transmitting already
+		radiotext_counter++;		// only increment if we do RDS and transmit.
 		char logbuf[64];
 		PScounter++;
 		if (PScounter > 2) { // change PS to next entry (middle shorters)
@@ -523,9 +482,38 @@ void run_daemon()
 		delete myRDS;
 	    }
 	}
+	if (radiotext_counter >= 2) { // we call RDS 0A/PS each second and count this up there. RT should be send every 2(spec:4!) sec. Automatic: only call this if RDS is enabled, cause only then we do inc!
+	    if (currentRTstr == NULL) { // do some default
+		currentRTstr = strdup(rdssid->toString(' ')); // concat station ID as RT if we got nothing else.
+	    }
+	    radiotext_counter = 0; // reset counter.
+	    char logbuf[128];
+	    snprintf(logbuf,sizeof(logbuf), "sending RDS for RT... RT:'%s'",currentRTstr);
+	    log_message(logbuf);
+	    rds_encoder* myRDS = new rds_encoder;
+	    rds_encoder::rds_message_list* RDSmsg;
+	    if (RTChanged) myRDS->set_rt(currentRTstr);  // only do this normally if it really changed! Otherwise irritates radios.
+	    RTChanged = false;
+
+	    RDSmsg = myRDS->get_rt_msg();
+	    rds_encoder::rds_message_list* tmpList;
+	    tmpList = RDSmsg;
+	    int8_t transmit_result = 0;
+	    while (tmpList) { 			//for each element in list (while tmplist not null, later iterate to next element.
+		transmit_result = transmitter.transmit_rds(tmpList->rds_message16);
+		if (transmit_result < 0) {		// error occured
+		    log_message("sending RDS failed, resetting transmitter.");
+		    transmitting = false;
+	        }
+	        tmpList = tmpList->next; 	// iterate to next element
+	    }
+	    if (!transmitting) next_loop = strdup("activate"); // dirty trick: if send failed, reactivate/reinitialize transmitter. Helps I2C errors.
+	    delete myRDS;
+	}
     sleep(0.9);
     }
     if (pwmController != NULL) delete(pwmController);
+    if (currentRTstr != NULL) free(currentRTstr);
     close(sock);
     unlink(SOCKET_PATH);
 }

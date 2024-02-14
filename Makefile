@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -g
+CXXFLAGS = -Wall -Wextra -std=c++17
 LIBS = -lwiringPi
 
 TARGET = fmtx

@@ -108,6 +108,7 @@ public:
     void set_pty(pty_codes_eu pty);
     void set_ps(const char* stationname);
     void set_tp(bool traffic_program); // sets the flag we transmit traffic program/info
+    void set_rt(const char* radiotext);
     void set_music();
     void set_speech();
     void enable_traffic();
@@ -115,6 +116,7 @@ public:
 
 
     rds_message_list* get_ps_msg ();
+    rds_message_list* get_rt_msg ();
 
 private:
 
@@ -124,6 +126,9 @@ private:
     bool tp = false; 		// we support/do traffic program
     bool ms = false;		// false=music, true=speech
     bool ta = false;		// currently a traffic announcement is runnin
+    bool rt_new = true;		// is the RT new/changed?
+    uint8_t rt_abflag = 0;	// ab flag in RT to signal changes
+    char* rt = NULL;		// Radiotext string
     uint16_t parse_hex(const char* str);
     rds_message_list* rmlHead = NULL;  // to save the head position
     
