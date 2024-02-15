@@ -483,7 +483,7 @@ void run_daemon()
 		delete myRDS;
 	    }
 	}
-	if (radiotext_counter >= 2) { // we call RDS 0A/PS each second and count this up there. RT should be send every 2(spec:4!) sec. Automatic: only call this if RDS is enabled, cause only then we do inc!
+	if (radiotext_counter >= 4) { // we call RDS 0A/PS each second and count this up there. RT should be send every 2(spec:4!) sec. Automatic: only call this if RDS is enabled, cause only then we do inc!
 	    if (currentRTstr == NULL) { // do some default
 		currentRTstr = strdup(rdssid->toString(' ')); // concat station ID as RT if we got nothing else.
 	    }
@@ -494,7 +494,7 @@ void run_daemon()
 	    rds_encoder* myRDS = new rds_encoder;
 	    rds_encoder::rds_message_list* RDSmsg;
 	    if (RTChanged) myRDS->set_rt(currentRTstr);  // only do this normally if it really changed! Otherwise irritates radios.
-	    RTChanged = false;
+//	    RTChanged = false;
 
 	    RDSmsg = myRDS->get_rt_msg();
 	    rds_encoder::rds_message_list* tmpList;
@@ -511,8 +511,8 @@ void run_daemon()
 	    if (!transmitting) next_loop = strdup("activate"); // dirty trick: if send failed, reactivate/reinitialize transmitter. Helps I2C errors.
 	    delete myRDS;
 	}
-//    sleep(0.9);
-    usleep(900000);
+    sleep(1);
+//    usleep(900000);
     }
     if (pwmController != NULL) delete(pwmController);
     if (currentRTstr != NULL) free(currentRTstr);

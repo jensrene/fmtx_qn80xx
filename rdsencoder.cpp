@@ -97,8 +97,8 @@ rds_encoder::rds_message_list* rds_encoder::get_rt_msg(){
     uint8_t rt_len = strnlen(rt,64);
     uint8_t iterationsNeeded = ((rt_len + (4-1))/4); // each 2A msg can contain 4 chars --> rtlen/4. Also: Always round up, even for shorter messages we need afull block.
     unsigned char first, second, third, fourth;
-//    if (rt_new) rt_abflag ^= 1; // flip between 0 and 1
-    rt_abflag ^= 1; // somehow, flipping each time gives better results with most FM recievers.
+    if (rt_new) rt_abflag ^= 1; // flip between 0 and 1
+//    rt_abflag ^= 1; // somehow, flipping each time gives better results with most FM recievers.
     for (int i = 0; i < iterationsNeeded; i++) {
 	rds_message_list *new_node = (rds_message_list* )malloc(sizeof(rds_message_list));
 	if (!new_node) {
