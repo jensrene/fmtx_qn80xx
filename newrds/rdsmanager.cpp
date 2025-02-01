@@ -61,6 +61,41 @@ void RDSManager::clearBuffer()
     nextSendIndex_ = 0;
 }
 
+void RDSManager::shuffleBuffer()
+{
+    if (!buffer_)
+        return;
+
+    // Find the first sentinel => that is the boundary
+    int sentinelIndex = 0;
+    while (sentinelIndex < bufferSize_ && !isSentinel(sentinelIndex))
+        sentinelIndex++;
+
+    // If sentinelIndex <= 1, there's 0 or 1 item => no shuffle needed
+    int count = sentinelIndex; // number of valid messages
+    if (count <= 1)
+    {
+        // Just reset to 0
+        nextSendIndex_ = 0;
+        return;
+    }
+
+    // Fisher-Yates shuffle over [0..count-1]
+    for (int i = 0; i < (count - 1); i++)
+    {
+        int j = i + rand() % (count - i);
+        // Swap buffer_[i] and buffer_[j]
+        RDSMessage temp = buffer_[i];
+        buffer_[i] = buffer_[j];
+        buffer_[j] = temp;
+    }
+
+    // The sentinel remains at sentinelIndex
+    // We do not disturb it. 
+    // Just ensure we reset nextSendIndex_ so sending starts from the new order
+    nextSendIndex_ = 0;
+}
+
 // ------------------------------------------------
 // isSentinel
 bool RDSManager::isSentinel(int index)
@@ -457,7 +492,7 @@ void RDSManager::sendRDSOverI2C(const RDSMessage* msg)
     // printf("Sending RDS: %04X %04X %04X %04X\n",
     //        msg->blocks[0], msg->blocks[1], msg->blocks[2], msg->blocks[3]);
     if (transmit) {
-        transmit(msg);
+        transmit(msg,RDSManager::nextSendIndex_);
     } else {
         return; // if we set no output function, having no output is expected, no error => just return
     }

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "rdsmanager.h"
+
 
 class rdsinfo {
 
@@ -54,6 +56,14 @@ class rdsinfo {
         Alarm = 31
     };
 
+/** 
+    * @brief set transmitter function to be used to send RDS out.a64l
+    * 
+    * gets called every time we want to send out a single RDS message.
+    * function structure needed : void(const RDSMessage*) 
+    * (See RDSManager::TransmitFunc)
+    */
+    void setTransmitter(RDSManager::TransmitFunc func);
 
  /**
      * @brief Sets the Program Identification (PI) code.
@@ -152,9 +162,13 @@ private:
     bool tp = false; 		// we support/do traffic program
     bool ms = false;		// false=music, true=speech
     bool ta = false;		// currently a traffic announcement is runnin
-    bool rt_new = true;		// is the RT new/changed?
+    bool rds_changed = true;// do we have changes, do we need to regenerate RDS messages?
 
     char* rt = NULL;		// Radiotext string    
+
+    RDSManager::TransmitFunc metaTransitFunc = NULL;
+
+    void metaTransmit(const RDSMessage* msg, const int bufferIndex);
 
 };
 

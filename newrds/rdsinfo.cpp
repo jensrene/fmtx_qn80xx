@@ -1,5 +1,5 @@
 #include "rdsinfo.h"
-#include "rdsmanager.h"
+
 
 #include <string.h>
 
@@ -18,12 +18,44 @@ unsigned char rdsinfo::safeCharOrCR(const char* rt, size_t index, size_t length)
 }
 
 
+void rdsinfo::setTransmitter(RDSManager::TransmitFunc func)
+{
+    metaTransitFunc = func;
+    if (myRDSManager != NULL) {
+        myRDSManager->setTransmitter(metaTransitFunc);
+
+    }
+}
+
+
+
+void rdsinfo::metaTransmit(const RDSMessage* msg, const int bufferIndex) { 
+ if (bufferIndex == 0) { //we are at the buffer start but did not send it
+    if (rdsinfo::rds_changed) { // rds changed-->needs update...
+        // TODO: regenerate RDS data. 
+        // TODO FIRST: write a generator function in this class that generates all "wanted" classes. 
+        //              (so was we assume a fixed set of classes, but it could later be configurable)
+        rdsinfo::rds_changed == false;        
+    }
+ }
+
+
+
+ // called to do transmit
+ if (metaTransitFunc != NULL) 
+ {
+    metaTransitFunc(msg,bufferIndex);
+ }
+}
+
 
 /* PUBLIC */
 
 rdsinfo::rdsinfo(int bufferSize) 
 {
     myRDSManager = new RDSManager(bufferSize);
+    //myRDSManager->setTransmitter(rdsinfo::consoleTransmit);
+    myRDSManager->setTransmitter([this](const RDSMessage* msg, const int bufferIndex) { this->metaTransmit(msg,bufferIndex); } );
 }
 
 rdsinfo::~rdsinfo()
@@ -37,10 +69,12 @@ void rdsinfo::set_pi(const char* picode) {
     {
         this->picode = myRDSManager->parseHex(picode);
     }
+    this->rds_changed = true;
 }
 
 void rdsinfo::set_pty(pty_codes_eu pty){
     this->pty = pty;
+    this->rds_changed = true;
 }
 
 void rdsinfo::set_ps(const char* stationname){
@@ -54,7 +88,7 @@ void rdsinfo::set_ps(const char* stationname){
 	memset(ps+len,' ',8-len);
 	ps[8] = '\0';
     }
-    
+    this->rds_changed = true;
 }
 
 void rdsinfo::set_rt(const char* radiotext){
@@ -64,5 +98,5 @@ void rdsinfo::set_rt(const char* radiotext){
     }
     if (rt != NULL) free (rt);
     rt = strndup(radiotext,64); //rt is max 64 byte
-    rt_new = true;
+    this->rds_changed = true;
 }

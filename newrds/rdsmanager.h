@@ -20,7 +20,7 @@ class RDSManager
 {
 public:
 
-    using TransmitFunc = std::function<void(const RDSMessage*)>;
+    using TransmitFunc = std::function<void(const RDSMessage*, const int)>;
 
     void setTransmitter(TransmitFunc func);
 
@@ -79,6 +79,16 @@ public:
     // Clears the entire buffer and sets a sentinel at position 0 (meaning “end”).
     // So, no groups will be sent until you add something.
     void clearBuffer();
+
+    // ------------------------------------------------
+    // shuffleBuffer
+    //
+    // Finds the first sentinel => that defines how many valid entries we have.
+    // Then do a Fisher-Yates shuffle on [0..count-1], leaving the sentinel in place.
+    // Finally, reset nextSendIndex_ = 0 so we start from the newly shuffled order.
+    // For consistancy, it would be adviced to only do shuffle when nextSendIndex_ is 
+    // naturally 0, means we just finished with the previous buffer
+    void shuffleBuffer();
 
     // Adds an entire "station name" in Group 0A form, which typically takes 4 RDS groups
     // for an 8-char PS (2 chars per group). Also sets bits for TA, MS, etc.

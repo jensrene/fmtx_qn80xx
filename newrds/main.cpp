@@ -3,8 +3,8 @@
 #include <time.h>
 #include <stdlib.h>
 
-void consoleTransmit(const RDSMessage* msg) {
-        printf("Sending RDS: %04X %04X %04X %04X\n",
+void consoleTransmit(const RDSMessage* msg, int BufferIndex) {
+        printf("Sending RDS [%d]: %04X %04X %04X %04X\n", BufferIndex,
         msg->blocks[0], msg->blocks[1], msg->blocks[2], msg->blocks[3]);
 }
 
@@ -33,6 +33,8 @@ int main()
     // 'index' is now 6, sentinel at 6 => next free is 6
 
     index = rds.addGroup2A(0x1235,0,0x00, 0,"This is my station",index);
+
+    rds.shuffleBuffer();
 
     // In total, the buffer has:
     //   [0] 0A chunk0
