@@ -7,7 +7,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <stdio.h>
+#include <ctype.h>
+// #include <stdio.h>
 
 // A convenient sentinel pattern: 0xFFFF in all blocks
 static const uint16_t SENTINEL_VAL = 0xFFFF;
@@ -41,6 +42,10 @@ RDSManager::~RDSManager()
         buffer_ = NULL;
     }
 }
+
+void RDSManager::setTransmitter(TransmitFunc func) {
+        RDSManager::transmit = func;
+    }
 
 // ------------------------------------------------
 // clearBuffer
@@ -87,12 +92,16 @@ void RDSManager::writeSentinel(int index)
 void RDSManager::buildGroup0ASub(
     RDSMessage* outMsg,
     uint16_t piCode,
-    int ta,
-    int ms,
+    uint8_t tp,
+    uint8_t pty,
+    uint8_t ta,
+    uint8_t ms,
     const char* ps8,
     int chunkIndex
 )
 {
+    int group_type = group_types::BTS_0A;
+
     // Zero it
     outMsg->blocks[0] = 0;
     outMsg->blocks[1] = 0;
@@ -102,14 +111,20 @@ void RDSManager::buildGroup0ASub(
     // block0 = PI
     outMsg->blocks[0] = piCode;
 
-    // block1: group code = 0, version A => bits [15..12]=0, bit 11=0
+    // block1: group code = 0, version A => bits [15..12]=0, bit 11=0 
     // bit 10 => TP=0 (just an example), bits [9..5] => PTY=0,
     // bit4 => MS, bit3 => TA
     // bits [2..1] => address (which chunk?), bit0 => textAB=0 for simplicity
     uint16_t b1 = 0x0000;
-    if (ms) { b1 |= (1 << 4); } // MS
-    if (ta) { b1 |= (1 << 3); } // TA
 
+    b1 = ((group_type & 0b11111) << 11) | // Group Type (5 bits)
+                   ((tp & 0b1) << 10) | // Traffic Program (TP)
+                   ((pty & 0b11111) << 5) | // Program Type (PTY) (5 bits)
+                   ((ta & 0b1) << 4) | // Traffic Announcement (TA)
+                   ((ms & 0b1) << 3); //| // Music/Speech (MS)
+                   //(((di >> (3 - i)) & 0b1) << 2) | // DI (1 bit, inverse order)
+                   //(i & 0b11);       
+    
     // chunkIndex goes in [2..1]
     // e.g. chunk 0 => address=0, chunk1 =>1, chunk2=>2, chunk3=>3
     // So let's do:
@@ -143,8 +158,10 @@ void RDSManager::buildGroup0ASub(
 //  Returns the index after the last written group. Also writes a sentinel there.
 int RDSManager::addGroup0A(
     uint16_t piCode,
-    int ta,
-    int ms,
+    uint8_t tp,
+    uint8_t pty,
+    uint8_t ta,
+    uint8_t ms,
     const char* ps8,
     int startIndex
 )
@@ -163,7 +180,7 @@ int RDSManager::addGroup0A(
     // Build 4 subgroups
     for (int i = 0; i < 4; i++)
     {
-        buildGroup0ASub(&buffer_[startIndex + i], piCode, ta, ms, ps8, i);
+        buildGroup0ASub(&buffer_[startIndex + i], piCode, tp, pty, ta, ms, ps8, i);
     }
 
     int nextPos = startIndex + 4;
@@ -312,6 +329,121 @@ int RDSManager::addGroup4A(
     return nextPos;
 }
 
+
+void RDSManager::buildGroup2ASub(
+        RDSMessage* outMsg,
+        uint16_t piCode,
+        uint8_t tp,
+        uint8_t pty,
+        uint8_t textAB,
+        uint8_t  segmentAddr,
+        uint8_t  c0,
+        uint8_t  c1,
+        uint8_t  c2,
+        uint8_t  c3
+)
+{    
+    // set group type
+    uint8_t group_type = RDSManager::group_types::RADIO_A_2A;
+
+    // Zero it
+    outMsg->blocks[0] = 0;
+    outMsg->blocks[1] = 0;
+    outMsg->blocks[2] = 0;
+    outMsg->blocks[3] = 0;
+
+    // block0 = PI
+    outMsg->blocks[0] = piCode;
+
+    uint16_t b1 = 0x0000;
+
+    b1 = ((group_type & 0b11111) << 11) | // Group Type (5 bits)
+                   ((tp & 0b1) << 10) | // Traffic Program (TP)
+                   ((pty & 0b11111) << 5) |  // Program Type (PTY) (5 bits)
+                   ((textAB & 0b1) <<4) |
+                   ((segmentAddr & 0b1111));
+
+    outMsg->blocks[1] = b1;
+
+    outMsg->blocks[2] = ((uint16_t)c0 << 8) | (uint16_t)c1;
+    outMsg->blocks[3] = ((uint16_t)c2 << 8) | (uint16_t)c3;                
+}
+
+// ------------------------------------------------
+// addGroup2A
+//  Writes 2A groups
+int RDSManager::addGroup2A(
+        uint16_t piCode,
+        uint8_t  tp,
+        uint8_t  pty,
+        uint8_t  textAB,
+        const char *radiotext, 
+        int startIndex
+)
+{
+    const int CHARS_PER_GROUP = 4;  // 2 chars in block C + 2 in block D
+
+    // Determine how many characters are actually used
+    size_t textLen = strlen(radiotext);
+    if (textLen > MAX_RT_CHARS) {
+        textLen = MAX_RT_CHARS; // "truncate" / limit max size
+    }
+
+    if (!buffer_) return -1;
+    if (!radiotext) return -2;
+    if (startIndex < 0 || startIndex >= bufferSize_) return -1;
+
+    // Minimum 1 group, maximum 16
+    // Each group = 4 characters => groupCount = ceil(textLen/4)
+    uint8_t groupCount = (uint8_t)((textLen + (CHARS_PER_GROUP - 1)) / CHARS_PER_GROUP);
+    if (groupCount == 0) {
+        groupCount = 1; // send at least one group even if text is empty
+    }
+
+    // Prepare a local buffer of 64 chars (fill with spaces if needed)
+    char textBuf[MAX_RT_CHARS];
+    memset(textBuf, ' ', sizeof(textBuf));
+    memcpy(textBuf, radiotext, textLen);
+
+
+    // We need space for 4 subgroups + 1 sentinel => 5 slots
+    if (startIndex + groupCount >= bufferSize_)
+    {
+        // Not enough space to fit all groupMsgs plus the sentinel
+        return -4;
+    }
+
+    // Build each group
+    for (uint8_t g = 0; g < groupCount; g++)
+    {
+        // Extract 4 chars from the text (and map them to RDS)
+        // index base: g*4
+        uint8_t c0 = iso8859ToRDSChar((unsigned char)textBuf[g*4 + 0]);
+        uint8_t c1 = iso8859ToRDSChar((unsigned char)textBuf[g*4 + 1]);
+        uint8_t c2 = iso8859ToRDSChar((unsigned char)textBuf[g*4 + 2]);
+        uint8_t c3 = iso8859ToRDSChar((unsigned char)textBuf[g*4 + 3]);
+
+        // Build a single 2A group (4 blocks)
+        buildGroup2ASub(
+            &buffer_[startIndex + g],
+            piCode, 
+            tp, 
+            pty, 
+            textAB,
+            g,       // segment address (0..15)
+            c0, c1,  // block C (2 chars)
+            c2, c3  // block D (2 chars)
+        );
+    }
+
+    int nextPos = startIndex + groupCount;
+    // Write sentinel at nextPos
+    writeSentinel(nextPos);
+
+    return nextPos;
+}
+
+
 // ------------------------------------------------
 // sendRDSOverI2C
 //  Stub for actual I2C writes to the QN8066 (or similar)
@@ -322,8 +454,13 @@ void RDSManager::sendRDSOverI2C(const RDSMessage* msg)
     //   2) Trigger RDS send
     //
     // For demonstration, we just might do:
-     printf("Sending RDS: %04X %04X %04X %04X\n",
-            msg->blocks[0], msg->blocks[1], msg->blocks[2], msg->blocks[3]);
+    // printf("Sending RDS: %04X %04X %04X %04X\n",
+    //        msg->blocks[0], msg->blocks[1], msg->blocks[2], msg->blocks[3]);
+    if (transmit) {
+        transmit(msg);
+    } else {
+        return; // if we set no output function, having no output is expected, no error => just return
+    }
 }
 
 uint64_t RDSManager::getCurrentTimeMs(void) 
@@ -371,5 +508,90 @@ void RDSManager::update()
     {
         // wrap around
         nextSendIndex_ = 0;
+    }
+}
+
+uint16_t RDSManager::parseHex(const char* str) {
+    uint16_t result = 0;
+    int count = 0;
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (!isxdigit(str[i])) {
+            // If the current character is not a valid hexadecimal digit, return 0
+            return 0;
+        }
+        if (count >= 4) {
+            // If we have already processed 4 hexadecimal digits, ignore the rest of the string
+            break;
+        }
+        // Convert the current hexadecimal digit to its numerical value and add it to the result
+        result = (result << 4) + (isdigit(str[i]) ? (str[i] - '0') : (tolower(str[i]) - 'a' + 10));
+        count++;
+    }
+    return result;
+}
+
+uint8_t RDSManager::iso8859ToRDSChar(unsigned char c) {
+        // Standard ASCII characters (0x20..0x7F) pass through unchanged
+    if (c >= 0x20 && c <= 0x7F)
+    {
+        return c;
+    }
+
+    // Map extended Latin characters (ISO-8859-1) to RDS codes per Annex E:
+    switch (c)
+    {
+        case 0xC4: return 0xD1; // Ä -> RDS 0xD1
+        case 0xD6: return 0xD7; // Ö -> RDS 0xD7
+        case 0xDC: return 0xD9; // Ü -> RDS 0xD9
+        case 0xE4: return 0x91; // ä -> RDS 0xE1
+        case 0xF6: return 0x97; // ö -> RDS 0xF2
+        case 0xFC: return 0x99; // ü -> RDS 0xF3
+        case 0xDF: return 0x8D; // ß -> RDS 0x8D
+/* WRONG but can be fixed: 
+        case 0xC0: return 0x80; // À -> RDS 0x80
+        case 0xC1: return 0x81; // Á -> RDS 0x81
+        case 0xC2: return 0x82; // Â -> RDS 0x82
+        case 0xC3: return 0x83; // Ã -> RDS 0x83
+        case 0xC7: return 0x87; // Ç -> RDS 0x87
+        case 0xC8: return 0x88; // È -> RDS 0x88
+        case 0xC9: return 0x89; // É -> RDS 0x89
+        case 0xCA: return 0x8A; // Ê -> RDS 0x8A
+        case 0xCB: return 0x8B; // Ë -> RDS 0x8B
+        case 0xCC: return 0x8C; // Ì -> RDS 0x8C
+        case 0xCD: return 0x8D; // Í -> RDS 0x8D
+        case 0xCE: return 0x8E; // Î -> RDS 0x8E
+        case 0xCF: return 0x8F; // Ï -> RDS 0x8F
+        case 0xD1: return 0x91; // Ñ -> RDS 0x91
+        case 0xD2: return 0x92; // Ò -> RDS 0x92
+        case 0xD3: return 0x93; // Ó -> RDS 0x93
+        case 0xD4: return 0x94; // Ô -> RDS 0x94
+        case 0xD5: return 0x95; // Õ -> RDS 0x95
+        case 0xD9: return 0x99; // Ù -> RDS 0x99
+        case 0xDA: return 0x9A; // Ú -> RDS 0x9A
+        case 0xDB: return 0x9B; // Û -> RDS 0x9B
+        case 0xE0: return 0xA0; // à -> RDS 0xA0
+        case 0xE1: return 0xA1; // á -> RDS 0xA1
+        case 0xE2: return 0xA2; // â -> RDS 0xA2
+        case 0xE3: return 0xA3; // ã -> RDS 0xA3
+        case 0xE7: return 0xA7; // ç -> RDS 0xA7
+        case 0xE8: return 0xA8; // è -> RDS 0xA8
+        case 0xE9: return 0xA9; // é -> RDS 0xA9
+        case 0xEA: return 0xAA; // ê -> RDS 0xAA
+        case 0xEB: return 0xAB; // ë -> RDS 0xAB
+        case 0xEC: return 0xAC; // ì -> RDS 0xAC
+        case 0xED: return 0xAD; // í -> RDS 0xAD
+        case 0xEE: return 0xAE; // î -> RDS 0xAE
+        case 0xEF: return 0xAF; // ï -> RDS 0xAF
+        case 0xF1: return 0xB1; // ñ -> RDS 0xB1
+        case 0xF2: return 0xB2; // ò -> RDS 0xB2
+        case 0xF3: return 0xB3; // ó -> RDS 0xB3
+        case 0xF4: return 0xB4; // ô -> RDS 0xB4
+        case 0xF5: return 0xB5; // õ -> RDS 0xB5
+        case 0xF9: return 0xB9; // ù -> RDS 0xB9
+        case 0xFA: return 0xBA; // ú -> RDS 0xBA
+        case 0xFB: return 0xBB; // û -> RDS 0xBB
+*/
+        default:
+            return '.'; // Fallback for unknown characters
     }
 }

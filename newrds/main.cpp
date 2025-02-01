@@ -1,7 +1,12 @@
 #include "rdsmanager.h"
-// #include <stdio.h>
+#include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
+
+void consoleTransmit(const RDSMessage* msg) {
+        printf("Sending RDS: %04X %04X %04X %04X\n",
+        msg->blocks[0], msg->blocks[1], msg->blocks[2], msg->blocks[3]);
+}
 
 int main()
 {
@@ -9,13 +14,14 @@ int main()
 
     // Make an RDSManager with space for 32 groups
     RDSManager rds(32);
+    rds.setTransmitter(consoleTransmit);
 
     // 1) Clear the buffer
     rds.clearBuffer();
 
     // 2) Add a station name (Group 0A) at position 0
     //    Suppose 8-char PS = "ROCK 101"
-    int index = rds.addGroup0A(0x1234, /*TA=*/0, /*MS=*/1, "ROCK 101", 0);
+    int index = rds.addGroup0A(rds.parseHex("1234"), /*TP=*/1,/*PTY=*/0x00,/*TA=*/0, /*MS=*/1, "ROCK 101", 0);
     // 'index' now should be 4, plus the sentinel at 4 => next free is 4
 
     // 3) Add a single 4A group (time), after that
@@ -25,6 +31,8 @@ int main()
     // Let's add another 4A group (like a second time or weighting)
     index = rds.addGroup4A(0x1234, 2025, 1, 31, 12, 5, /*offset*/2, index);
     // 'index' is now 6, sentinel at 6 => next free is 6
+
+    index = rds.addGroup2A(0x1235,0,0x00, 0,"This is my station",index);
 
     // In total, the buffer has:
     //   [0] 0A chunk0
@@ -57,6 +65,7 @@ int main()
         // Sleep ~10 ms
 #ifdef _WIN32
         Sleep(10);
+
 #else
         struct timespec ts;
         ts.tv_sec = 0;
