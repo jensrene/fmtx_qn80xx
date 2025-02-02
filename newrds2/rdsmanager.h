@@ -1,27 +1,15 @@
-#ifndef RDSINFO_H
-#define RDSINFO_H
+// rds.h
+#ifndef RDSMANAGER_H
+#define RDSMANAGER_H
 
-#include <stdint.h>
-#include <stdlib.h>
+#include "rdsencoder.h"
 
-#include "rdsmanager.h"
+class rdsmanager : public rdsencoder {
+public:
+   
+    // ENUMS
 
-
-class rdsinfo {
-
-     /**
-     * @brief Constructor of rdsinfo class
-     * 
-     * 
-     * @param bufferSize the size of the rds internal rdsmassage buffer. Each RDS message requires 1 entry, but some data requires multiple rds messages, so be considerate!
-     *               
-     */
-    explicit rdsinfo(int bufferSize = 64);
-    ~rdsinfo();
-
-    public:
-
- enum pty_codes_eu : uint8_t {
+     enum ptyCodesEu : uint8_t {
         NoProgrammeTypeDefined = 0,
         News = 1,
         CurrentAffairs = 2,
@@ -56,14 +44,71 @@ class rdsinfo {
         Alarm = 31
     };
 
-/** 
+    // STRUCTSS
+
+    // Holds info about a group code + scheduling weight
+    struct RDSGroupConfig
+    {
+        uint8_t  groupCode;  // e.g. 0x0A, 0x2A, 0x4A
+        uint8_t  weight;     // Frequency weighting
+    };
+
+    // FUNCS
+
+    explicit rdsmanager(int bufferSize = 64);
+    explicit rdsmanager();
+    ~rdsmanager();
+    
+    /**
+    * @brief Add or Update a group with given weight
+    *
+    * The "weight" concept is how frequently we want to schedule this group
+    * relative to others. For example, if we have:
+    *   - 0A with weight = 5
+    *   - 2A with weight = 2
+    *   - 4A with weight = 1
+    * Then the total weight is 8. In a weighted round-robin approach, we pick
+    * from these groups with probabilities 5/8, 2/8, and 1/8 respectively.
+    * The higher the weight, the more often the group is sent.
+    *
+    * In many RDS setups, 0A is given a higher weight since it carries essential
+    * station info (PI, PS, etc.). 2A might be used for RadioText (moderate
+    * frequency), and 4A might be used for Clock Time (less frequent).
+    * This is just an example usage of weighting.
+    *
+    * If the group already exists, we update its weight (and totalWeight).
+    * If weight=0, we remove the group entirely.
+    *
+    * Common RDS Example:
+    *   addGroup(GROUP_0A, 5);  // Very frequent
+    *   addGroup(GROUP_2A, 3);  // Moderately frequent
+    *   addGroup(GROUP_4A, 1);  // Less frequent
+    *
+    */     
+    void addGroup(uint8_t groupCode, uint8_t weight);
+
+    /** 
+    * remove an existing group from the schedule
+    */
+    void rdsmanager::delGroup(uint8_t groupCode);
+
+    /**
+    * Weighted round-robin - get the next message to send.
+    * (maybe be private if we implement an more call based method with sender func)
+    */
+    RDSMessage rdsmanager::getNextMessage();
+
+   /** 
     * @brief set transmitter function to be used to send RDS out.
     * 
     * gets called every time we want to send out a single RDS message.
     * function structure needed : void(const RDSMessage*) 
     * (See RDSManager::TransmitFunc)
     */
-    void setTransmitter(RDSManager::TransmitFunc func);
+    void setTransmitter(TransmitFunc func);
+
+    void setTransmitter(TransmitFunc func, bool useBufferTransmitter);
+
 
  /**
      * @brief Sets the Program Identification (PI) code.
@@ -74,7 +119,7 @@ class rdsinfo {
      * @param picode A pointer to a character array (C-string) representing the PI code.
      *               
      */
-    void set_pi(const char* picode);
+    void setPi(const char* picode);
 
     /**
      * @brief Sets the Program Type (PTY) code.
@@ -84,7 +129,7 @@ class rdsinfo {
      * 
      * @param pty The PTY code as defined in the `pty_codes_eu` enumeration.
      */
-    void set_pty(pty_codes_eu pty);
+    void setPty(ptyCodesEu pty);
 
     /**
      * @brief Sets the Program Service (PS) name.
@@ -94,7 +139,7 @@ class rdsinfo {
      * 
      * @param stationname A pointer to a character array (C-string) containing the station name.
      */
-    void set_ps(const char* stationname);
+    void setPs(const char* stationname);
 
     /**
      * @brief Sets the Traffic Program (TP) flag.
@@ -106,7 +151,7 @@ class rdsinfo {
      *                        - `true` if the station provides traffic information.
      *                        - `false` otherwise.
      */
-    void set_tp(bool traffic_program);
+    void setTp(bool traffic_program);
 
     /**
      * @brief Sets the RadioText (RT) message.
@@ -117,7 +162,7 @@ class rdsinfo {
      * @param radiotext A pointer to a character array (C-string) containing the radio text message.
      *                  The pointer must remain valid while the message is in use.
      */
-    void set_rt(const char* radiotext);
+    void setRt(const char* radiotext);
 
     /**
      * @brief Marks the broadcast as music.
@@ -125,7 +170,7 @@ class rdsinfo {
      * RDS allows marking the type of content being broadcast. This function sets the
      * Music/Speech flag to indicate that the station is currently transmitting music.
      */
-    void set_music();
+    void setMusic();
 
     /**
      * @brief Marks the broadcast as speech.
@@ -133,7 +178,7 @@ class rdsinfo {
      * This function sets the Music/Speech flag to indicate that the station is currently
      * transmitting speech (e.g., news, talk shows, spoken-word content).
      */
-    void set_speech();
+    void setSpeech();
 
     /**
      * @brief Enables the Traffic Announcement (TA) flag.
@@ -142,7 +187,7 @@ class rdsinfo {
      * traffic information will temporarily switch to this station.
      * The flag should be set only when an actual traffic announcement is being made.
      */
-    void enable_traffic();
+    void enableTraffic();
 
     /**
      * @brief Disables the Traffic Announcement (TA) flag.
@@ -150,26 +195,41 @@ class rdsinfo {
      * This function clears the Traffic Announcement flag, signaling to receivers
      * that the station is no longer broadcasting an active traffic message.
      */
-    void disable_traffic();
+    void disableTraffic();
+
 
 private:
+    TransmitFunc p_transmit = nullptr;    
+    bool p_oldtransmit = false;
 
-    unsigned char safeCharOrCR(const char* rt, size_t index, size_t length);
+    uint16_t p_picode = 0;  // PI code of the station (kinda UID of the station)
+    ptyCodesEu p_pty = ptyCodesEu::Education; //also uint8_t with static_cast<uint8_t>(PtyCodesEU::News);
+    char p_ps[9] = "MY RADIO"; // really only 8 letters but compiler always adds \0
+    bool p_tp = false; 		// we support/do traffic program
+    bool p_ms = false;		// false=music, true=speech
+    bool p_ta = false;		// currently a traffic announcement is runnin
+    bool p_rds_changed = true;// do we have changes, do we need to regenerate RDS messages?
+    char* p_rt = NULL;		// Radiotext string    
 
-    uint16_t picode = 0;  // PI code of the station (kinda UID of the station)
-    pty_codes_eu pty = pty_codes_eu::Education; //also uint8_t with static_cast<uint8_t>(PtyCodesEU::News);
-    char ps[9] = "MY RADIO"; // really only 8 letters but compiler always adds \0
-    bool tp = false; 		// we support/do traffic program
-    bool ms = false;		// false=music, true=speech
-    bool ta = false;		// currently a traffic announcement is runnin
-    bool rds_changed = true;// do we have changes, do we need to regenerate RDS messages?
+    // For 2A (RadioText) segmentation
+    // Each 2A group can carry 4 text chars => 16 segments max for 64 chars
+    uint8_t  p_2ASegmentCount;  // total segments in the current RT
+    uint8_t  p_2ASegmentIndex;  // which segment we send next
 
-    char* rt = NULL;		// Radiotext string    
+    // For 0A (RadioText) segmentation
+    // Each 0A group can carry 2 text chars => 4 segments max for 8 chars
+    uint8_t  p_0ASegmentCount;  // total segments in the current RT
+    uint8_t  p_0ASegmentIndex;  // which segment we send next
 
-    RDSManager::TransmitFunc metaTransitFunc = NULL;
+    // Weighted scheduler data
+    RDSGroupConfig* p_groups;     // dynamically allocated array
+    size_t          p_groupCount;
+    size_t          p_groupCapacity;
+    uint16_t        p_totalWeight;
+    uint16_t        p_schedulerCounter;
 
-    void metaTransmit(const RDSMessage* msg, const int bufferIndex);
+    void rdsmanager::ensureCapacity(size_t minCapacity);
 
 };
 
-#endif
+#endif // RDSMANAGER_H

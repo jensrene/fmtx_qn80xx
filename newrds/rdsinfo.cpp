@@ -33,7 +33,7 @@ void rdsinfo::metaTransmit(const RDSMessage* msg, const int bufferIndex) {
  if (bufferIndex == 0) { //we are at the buffer start but did not send it
     if (rdsinfo::rds_changed) { // rds changed-->needs update...
         // TODO: regenerate RDS data. 
-        // TODO FIRST: write a generator function in this class that generates all "wanted" classes. 
+        // TODO FIRST: write a generator function in this class that generates all "wanted" RDS groups. 
         //              (so was we assume a fixed set of classes, but it could later be configurable)
         rdsinfo::rds_changed == false;        
     }
